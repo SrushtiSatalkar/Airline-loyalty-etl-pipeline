@@ -1,0 +1,10 @@
+[project]
+name = "airline-loyalty-etl-pipeline"
+version = "0.1.0"
+description = "Data engineering solution for the SkyPoints technical assessment"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
