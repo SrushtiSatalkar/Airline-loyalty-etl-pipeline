@@ -21,6 +21,8 @@ htmlcov/
 # Local data
 data/*
 !data/.gitkeep
+!data/sample/
+!data/sample/*.csv
 
 # IDE
 .vscode/
