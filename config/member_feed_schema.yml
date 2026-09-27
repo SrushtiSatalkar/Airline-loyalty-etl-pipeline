@@ -1,0 +1,44 @@
+version: 1
+
+record_type: D
+
+expected_field_count: 10
+
+expected_header:
+  - Member_Name
+  - Member_Id
+  - Enrollment_Date
+  - Last_Flight_Date
+  - Tier_Code
+  - Agent_Name
+  - State
+  - Country
+  - DOB
+  - Is_Active
+
+date_formats:
+  enrollment_date: "%Y%m%d"
+  last_flight_date: "%Y%m%d"
+  dob: "%d%m%Y"
+  
+fields:
+  - name: member_name
+    position: 1
+  - name: member_id
+    position: 2
+  - name: enrollment_date
+    position: 3
+  - name: last_flight_date
+    position: 4
+  - name: tier_code
+    position: 5
+  - name: agent_name
+    position: 6
+  - name: state
+    position: 7
+  - name: country
+    position: 8
+  - name: dob
+    position: 9
+  - name: is_active
+    position: 10
