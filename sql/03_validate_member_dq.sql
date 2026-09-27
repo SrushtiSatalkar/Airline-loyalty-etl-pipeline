@@ -1,12 +1,15 @@
 -- SkyPoints: Member parsing and business DQ evaluation
 --
 -- Purpose:
---   1. Parse validated detail records from RAW.
---   2. Retain raw tokens only during transformation/DQ evaluation.
---   3. Evaluate all applicable business DQ rules.
---   4. Return one evaluated row per source detail record.
+--   1. Parse detail records from RAW.
+--   2. Evaluate all applicable business DQ rules.
+--   3. Expose one evaluated row per source detail record.
 --
--- No data is inserted by this script.
+-- No data is inserted by this view.
+
+CREATE SCHEMA IF NOT EXISTS SKYPOINTS.STAGING;
+
+CREATE OR REPLACE VIEW SKYPOINTS.STAGING.V_MEMBER_DQ_EVALUATED AS
 
 WITH raw_records AS (
     SELECT
@@ -67,7 +70,6 @@ parsed_records AS (
 
     FROM raw_records
     WHERE record_type = 'D'
-      AND source_field_count = 10
 ),
 
 dq_evaluated AS (
@@ -76,6 +78,11 @@ dq_evaluated AS (
 
         ARRAY_TO_STRING(
             ARRAY_CONSTRUCT_COMPACT(
+
+                IFF(source_field_count != 10,
+                    'FIELD_COUNT_MISMATCH',
+                    NULL),
+
                 IFF(member_name IS NULL,
                     'MEMBER_NAME_MISSING',
                     NULL),
@@ -176,6 +183,7 @@ dq_evaluated AS (
                     'COUNTRY_TOO_LONG',
                     NULL
                 )
+
             ),
             '; '
         ) AS dq_reason
@@ -213,6 +221,4 @@ SELECT
 
     ingestion_timestamp
 
-FROM dq_evaluated
-
-ORDER BY source_row_number;
+FROM dq_evaluated;
