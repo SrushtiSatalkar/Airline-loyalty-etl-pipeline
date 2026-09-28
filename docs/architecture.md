@@ -1,93 +1,251 @@
 # Architecture: SkyPoints Global Loyalty Pipeline
 
-## 1. Objective
-SkyPoints receives daily member-profile flat files and redemption JSON. This design preserves the source feeds, validates and transforms them in Snowflake, and maintains one current member record plus the country-specific tables required by the assessment.
+## 1. Overview
 
-The SkyPoints Member and Redemption Architecture diagram provides the high-level overview of the two flows: member profiles pass through DQ and latest-record selection before country routing; redemptions are flattened and validated independently, then enriched from the current member state.
+SkyPoints receives daily member-profile flat files and redemption JSON.
 
----
+The pipeline uses:
 
-## 2. Requirements and Decisions
-* **Member Identity:** Use `Member_ID` as the business key. The source layout marks `Member_Name` as a key, but names can change or be shared, the JSON feed uses `member_id`, and country movement needs a stable identifier. This is an explicit assessment inconsistency, not a silent correction to the source contract.
-* **Profile Version:** Use `source_feed_timestamp` as the logical profile version for this assessment. `Last_Flight_Date` is business activity, not a version. This assumption must be confirmed with the source owner in a production implementation; delivery/ingestion time must not be substituted for business versioning unless the source contract guarantees that behavior.
-* **Current State:** A newer valid profile may replace an older one. Latest-record selection is performed after DQ validation, and current-state `MERGE` compares the incoming source version with the stored version. Neither an invalid newer record nor a late-arriving older record may overwrite current state.
-* **Historical Evidence:** `RAW` retains the original source records, while `STAGING` retains parsed and validated representations with source lineage. `CURATED.MEMBER_CURRENT` and the country targets represent current state. A separate country-change history is not required.
+```text
+Azure Blob → Python Orchestrator → Snowflake RAW → STAGING + DQ → CURATED
+```
 
----
+Member profiles are validated, versioned, merged into a canonical current-state table, and routed into country-specific tables.
 
-## 3. Data Flow and Layer Responsibilities
-
-### RAW — Source Evidence
-Python discovers and identifies batches, validates file-level metadata, and orchestrates bulk loading from Azure Blob Storage into Snowflake. RAW is append-oriented: it does not deduplicate, derive member attributes, or flatten JSON.
-
-* `RAW.RAW_MEMBER_FEED` preserves each supplied H/D member-feed line exactly in `raw_record`, together with batch, file, source-row, source-feed-timestamp, and ingestion lineage.
-
-* The member RAW file format intentionally treats the complete source line as a single field during ingestion. This prevents the pipe-delimited business fields from being interpreted before the source contract has been validated.
-
-* `source_field_count` is calculated from `raw_record` during staging and used to detect changes in the source contract. The current supplied H/D feed contains 10 business fields after the record-type indicator. A changed field count must be detected before positional parsing is applied downstream.
-
-* `RAW.RAW_REDEMPTION` retains the original JSON in `raw_payload` with equivalent batch and source-record lineage.
-
-### STAGING — Parsing and Validation
-Before positional parsing, the member feed is checked against the expected source contract. A field-count or header mismatch is treated as schema drift rather than being silently interpreted using the existing mapping. The original record remains preserved in RAW so that, after the source contract is confirmed and the parser is updated, the affected batch can be replayed.
-
-`STAGING.MEMBER_STAGING` has one parsed source member record per row. It contains typed source values, `Age`, `Stale_Member`, DQ status and reason, and the lineage needed to investigate or order records. DQ runs before latest-record selection, so a malformed record cannot win merely because it has a later timestamp.
-
-Redemption processing parses the retained JSON and uses Snowflake `FLATTEN` on `redemptions[]`. Transaction validation follows flattening. Invalid member or transaction records go to `DQ_QUARANTINE`, which records what failed, why, its batch and source location, and the source data needed for investigation.
-
-### CURATED — Queryable Current State and Transactions
-
-| Logical Grain and Role | Target Table | Description |
-| :--- | :--- | :--- |
-| **Canonical Current State** | `CURATED.MEMBER_CURRENT` | One current row per `Member_ID`; canonical current member state and source version. |
-| **Country Targets** | `CURATED.MEMBER_IND`, `CURATED.MEMBER_USA`, `CURATED.MEMBER_PHIL`, `CURATED.MEMBER_CAN`, `CURATED.MEMBER_AU` | Physical current-state targets synchronized from `MEMBER_CURRENT`. The table identifies the country, so these targets do not repeat `Country`. |
-| **Transaction Fact** | `CURATED.REDEMPTION_FACT` | One row per `txn_id`, containing transaction data, `member_id`, and ingestion/version lineage—not copied member name, tier, or country. |
-
-*Note: The supplied `IND.csv`, `USA.csv`, and `AUS.xlsx` files are separate sample/reference inputs, not additional canonical member feeds. Their smaller, different schemas must be checked and documented during ingestion, without silently merging their fields into the member model. The `AUS.xlsx` example includes an invalid enrollment date.*
+Redemption JSON is retained in RAW, flattened into transaction-level records, validated, and loaded into the curated transaction table.
 
 ---
 
-## 4. Processing Rules
+## 2. Architecture
 
-* **Member DQ and Latest-Record Selection:** Validate required values, supported country and active-flag values, date parsing, and applicable numeric values. Invalid records are quarantined, not silently dropped. For each `Member_ID`, select the latest valid profile by `source_feed_timestamp`.
-* **Conflict Resolution:** Identical repeats at the same version can be collapsed without changing current state. If same-version records disagree, quarantine the conflict and do not invent a winner from file or row order. Update `MEMBER_CURRENT` only when the incoming version is greater than the stored version; an equal version is not a new update.
-* **Deterministic Derived Values:** Derive `Age` with a birthday-aware calculation against the source feed’s as-of date, not the execution date. Set `Stale_Member` when days from `Last_Flight_Date` to that as-of date are greater than 90. If `Last_Flight_Date` is null, `Stale_Member` is null (unknown), rather than false or a fabricated date. A missing DOB likewise yields a null age when the source contract permits it.
-* **Country Movement:** `MEMBER_CURRENT` is the source of truth for country routing. For example, if a newer valid record moves member `223457` from `IND` to `USA`, synchronization removes that member from `MEMBER_IND` and places them in `MEMBER_USA`. It must not leave two current country rows. An older `IND` record arriving afterward cannot reverse the move.
-* **Redemptions and Member Relationship:** Validate flattened transactions, including `txn_id` presence and uniqueness, before loading `REDEMPTION_FACT`. Conflicting transactions with the same `txn_id` require DQ investigation. Enrich transactions through a `LEFT JOIN` from `REDEMPTION_FACT.member_id` to `MEMBER_CURRENT.Member_ID`. A valid transaction whose profile has not arrived remains in the fact; it is not automatically quarantined or discarded.
-
----
-
-## 5. Incremental Processing, Reruns, and Recovery
-Each load retains batch identity and source location. Transform only relevant new or retried batches rather than rescanning all historical staging. DQ checks, version-based selection, transaction-key checks, and current-state `MERGE` operations make repeated processing safe against duplicate current rows and facts.
-
-The orchestrator records whether raw load, transformations, tests, and country synchronization succeeded. On failure, retain `RAW` evidence and quarantine findings, stop publication of incomplete results, correct the cause, and rerun the identified batch. Country targets must be reconciled with `MEMBER_CURRENT` after a failed or interrupted routing step so a move cannot remain half-applied.
-
-Processing is idempotent: rerunning the same batch produces the same current state and transaction results rather than creating duplicate current records or transactions.
----
-
-## 6. Scale and Responsibility Split
-The billion-record-per-day requirement shapes the processing pattern; the supplied samples do not prove that throughput. Use Azure Blob Storage for object-storage landing, Snowflake bulk ingestion, set-based SQL, incremental batch filters, and pruning-friendly access to batch/version data.
-
-* **Python:** File discovery and validation, batch identification, raw-load orchestration, error handling, dbt invocation, and pipeline status.
-* **Snowflake/dbt:** Parsing, typing, DQ, latest-record selection, JSON `FLATTEN`, incremental transformations, merges, country routing, tests, and lineage.
-
----
-
-## 7. Testing Strategy
-* **pytest:** Validates filename parsing, batch identification, input validation, orchestration, and error handling.
-* **dbt / Snowflake Tests:** Asserts required fields, valid dates and accepted values, current-member and transaction uniqueness, DQ outcomes, and country-target consistency.
+```text
+                 Azure Blob Storage
+                        │
+                        ▼
+                Python Orchestrator
+                        │
+                        ▼
+              ┌─────────────────────┐
+              │     Snowflake RAW   │
+              │                     │
+              │ RAW_MEMBER_FEED     │
+              │ RAW_REDEMPTION_FEED │
+              └──────────┬──────────┘
+                         │
+              ┌──────────┴──────────┐
+              ▼                     ▼
+       Member STAGING        Redemption STAGING
+          + DQ                    + DQ
+              │                     │
+              ▼                     ▼
+       MEMBER_CURRENT        REDEMPTION
+              │                 CURATED
+              ▼
+       Country Tables
+```
 
 ---
 
-## 8. Assumptions and Open Questions
-1. Confirm that `source_feed_timestamp` is a logical profile version and define the member feed’s authoritative as-of date.
-2. The assessment field specification lists an optional `Post_Code` field, but the supplied H/D member feed does not contain that position. The implementation preserves the supplied H/D source shape in RAW and does not insert a positional `Post_Code` field that would shift `DOB` and `Is_Active`. If the source contract later adds `Post_Code`, the schema change must be detected and explicitly approved before updating the parser.
-3. Confirm source date formats, particularly ambiguous DOB values, and define the authoritative feed as-of date used for deterministic derived values.
-4. Confirm supported country and active-flag values and whether additional country targets are expected.
-5. Confirm whether reporting needs member attributes at transaction time (current design uses `LEFT JOIN` for current-state enrichment only).
+## 3. Key Design Decisions
+
+### Member identity
+
+`Member_ID` is the business key.
+
+Although the assessment source layout identifies `Member_Name` as a key, `Member_ID` is used because names are not stable identifiers, the JSON feed uses `member_id`, and country movement requires a stable key.
+
+### Latest record
+
+`source_feed_timestamp` is treated as the logical profile version.
+
+`Last_Flight_Date` represents business activity and is **not** used to determine which profile is newer.
+
+A newer valid record can replace the current record, while an older late-arriving record cannot.
+
+### DQ before latest-record selection
+
+Records are validated before choosing the latest record.
+
+This prevents a malformed newer record from replacing an older valid profile.
+
+```text
+RAW → Parse → DQ → Latest valid record → Current state
+```
+
+### Country movement
+
+`MEMBER_CURRENT` is the canonical source of truth.
+
+When a member moves from one country to another, the member is removed from the old country table and inserted into the new one. This prevents two simultaneous current-country records.
+
+### Deterministic derived values
+
+`Age` is calculated against the feed as-of date using a birthday-aware calculation.
+
+`Stale_Member` is `TRUE` when the last flight was more than 90 days before the feed as-of date. A missing flight date produces `NULL`.
 
 ---
 
-## 9. Implementation Sequence
+## 4. RAW Layer
 
-Architecture → Snowflake schemas → Raw ingestion → Staging transformations and DQ → Latest/current-state merge → Country routing → Redemption JSON → dbt tests → Python orchestration → pytest → CI → Documentation → Final adversarial review.
+RAW preserves source evidence and lineage before business transformations.
+
+### Member feed
+
+`RAW.RAW_MEMBER_FEED`
+
+The complete H/D source line is preserved in `raw_record` together with:
+
+* batch ID
+* source file
+* source row number
+* source feed timestamp
+* ingestion timestamp
+
+The complete line is initially treated as a single field so positional parsing is not applied before source-contract validation.
+
+### Redemption feed
+
+`RAW.RAW_REDEMPTION_FEED`
+
+The original JSON is stored as Snowflake `VARIANT` with equivalent batch and source lineage.
+
+---
+
+## 5. Source Contract and DQ
+
+The member source contract is versioned in:
+
+```text
+config/member_feed_schema.yml
+```
+
+The pipeline validates the expected header and field count before parsing.
+
+Schema changes are treated as contract changes rather than silently absorbed.
+
+This is particularly important because the assessment specification mentions an optional `Post_Code`, while the supplied H/D feed does not contain that field. The implementation follows the actual supplied payload and preserves it unchanged in RAW.
+
+Invalid records are quarantined with the original source record and a DQ reason.
+
+---
+
+## 6. Curated Layer
+
+### `CURATED.MEMBER_CURRENT`
+
+Canonical current member state.
+
+**Grain:** one row per `Member_ID`.
+
+The table is maintained using a version-aware `MERGE` so older records cannot overwrite newer state.
+
+### Country tables
+
+Current members are synchronized into:
+
+```text
+MEMBER_IND
+MEMBER_USA
+MEMBER_PHIL
+MEMBER_CAN
+MEMBER_AU
+MEMBER_CHN
+MEMBER_BRA
+MEMBER_GBR
+MEMBER_JPN
+MEMBER_ARE
+MEMBER_FRA
+MEMBER_DEU
+MEMBER_SGP
+```
+
+These represent current state rather than historical snapshots.
+
+### Redemption
+
+JSON `redemptions[]` is flattened using Snowflake `LATERAL FLATTEN`.
+
+**Grain:** one row per `txn_id`.
+
+Invalid transactions are quarantined. The controlled sample includes `RX10093`, which is quarantined because its `member_id` is not present in the current member state.
+
+---
+
+## 7. Incremental Processing and Idempotency
+
+Every execution uses a `batch_id`.
+
+The pipeline is designed for deterministic reruns using:
+
+* batch identity;
+* Snowflake COPY file tracking;
+* business-key-based `MERGE`;
+* source-version comparison;
+* transaction-key uniqueness;
+* deterministic country synchronization.
+
+Rerunning an already processed batch does not create duplicate current members or transactions.
+
+Pipeline execution is tracked in:
+
+```text
+CONTROL.BATCH_RUN
+```
+
+with `RUNNING`, `SUCCESS`, or `FAILED` status.
+
+---
+
+## 8. Responsibility Split
+
+| Python                     | Snowflake               |
+| -------------------------- | ----------------------- |
+| Configuration              | Parsing                 |
+| Batch validation           | DQ                      |
+| Source-contract validation | JSON `FLATTEN`          |
+| File/load orchestration    | Latest-record selection |
+| Error handling             | `MERGE` / current state |
+| Pipeline status            | Country routing         |
+|                            | Transaction processing  |
+
+Python handles orchestration; Snowflake performs the large-scale set-based transformations.
+
+This avoids row-by-row Python processing and keeps the design suitable for the assessment's billion-record/day requirement.
+
+---
+
+## 9. Testing
+
+Automated Snowflake SQL tests are executed through:
+
+```text
+python/run_tests.py
+```
+
+Current checks cover:
+
+* `Member_ID` uniqueness;
+* country-target reconciliation;
+* latest-record-wins;
+* country movement;
+* transaction uniqueness;
+* expected redemption quarantine;
+* transaction reconciliation;
+* redemption idempotency.
+
+The sample pipeline has been rerun successfully to verify idempotent behavior.
+
+---
+
+## 10. Main Assumptions
+
+* `Member_ID` is the stable business key.
+* `source_feed_timestamp` represents profile version for this assessment.
+* The feed date is the deterministic as-of date for derived values.
+* DQ occurs before latest-record selection.
+* Country tables represent current state.
+* Invalid records are quarantined rather than silently discarded.
+* The actual supplied H/D payload takes precedence over the inconsistent `Post_Code` position in the written field specification.
+
+Production implementation would confirm these assumptions with the source owner and add operational components such as scheduling, alerting, secrets management, and CI/CD as required.
