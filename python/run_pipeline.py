@@ -5,9 +5,18 @@ from pathlib import Path
 import yaml
 import snowflake.connector
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+def load_pipeline_config():
+    config_path = PROJECT_ROOT / "config" / "pipeline.yml"
+
+    with config_path.open("r", encoding="utf-8") as file:
+        config = yaml.safe_load(file)
+
+    if not config:
+        raise RuntimeError("Pipeline configuration is empty.")
+
+    return config
 
 def load_member_contract():
     contract_path = PROJECT_ROOT / "config/member_feed_schema.yml"
@@ -267,8 +276,12 @@ def execute_copy(connection, copy_sql, feed_name):
     print(f"  Files loaded: {files_loaded}")
     print(f"  Rows loaded: {rows_loaded}")
 
-def load_member_raw(connection, batch_id):
-    stage_path = f"@SKYPOINTS.RAW.AZURE_MEMBER_STAGE/member/{batch_id}/"
+def load_member_raw(connection, batch_id, source_config):
+    stage_path = (
+        f"@SKYPOINTS.RAW.AZURE_MEMBER_STAGE/"
+        f"{source_config['stage_path']}/{batch_id}/"
+    )
+    file_pattern = source_config["file_pattern"]
 
     copy_sql = f"""
     COPY INTO SKYPOINTS.RAW.RAW_MEMBER_FEED
@@ -293,18 +306,23 @@ def load_member_raw(connection, batch_id):
     FILE_FORMAT = (
         FORMAT_NAME = 'SKYPOINTS.RAW.MEMBER_RAW_LINE_FORMAT'
     )
-    PATTERN = '.*member_profile_feed\\.csv'
+    PATTERN = '{file_pattern}'
     ON_ERROR = 'ABORT_STATEMENT'
     """
 
     execute_copy(
-    connection,
-    copy_sql,
-    "member RAW",
+        connection,
+        copy_sql,
+        "member RAW",
     )
 
-def load_redemption_raw(connection, batch_id):
-    stage_path = f"@SKYPOINTS.RAW.AZURE_MEMBER_STAGE/redemption/{batch_id}/"
+
+def load_redemption_raw(connection, batch_id, source_config):
+    stage_path = (
+        f"@SKYPOINTS.RAW.AZURE_MEMBER_STAGE/"
+        f"{source_config['stage_path']}/{batch_id}/"
+    )
+    file_pattern = source_config["file_pattern"]
 
     copy_sql = f"""
     COPY INTO SKYPOINTS.RAW.RAW_REDEMPTION_FEED
@@ -327,17 +345,20 @@ def load_redemption_raw(connection, batch_id):
     FILE_FORMAT = (
         FORMAT_NAME = 'SKYPOINTS.RAW.REDEMPTION_JSON_FORMAT'
     )
-    PATTERN = '.*redemptions\\.json'
+    PATTERN = '{file_pattern}'
     ON_ERROR = 'ABORT_STATEMENT'
     """
 
     execute_copy(
-    connection,
-    copy_sql,
-    "redemption RAW",
+        connection,
+        copy_sql,
+        "redemption RAW",
     )
 
+
 def main():
+    config = load_pipeline_config()
+
     args = parse_args()
 
     validate_batch_id(args.batch_id)
@@ -383,7 +404,8 @@ def main():
 
         load_member_raw(
             connection,
-            args.batch_id,
+            batch_id,
+            config["sources"]["member"],
         )
 
         execute_sql_file(
@@ -393,7 +415,8 @@ def main():
 
         load_redemption_raw(
             connection,
-            args.batch_id,
+            batch_id,
+            config["sources"]["redemption"],
         )
 
         execute_sql_file(
