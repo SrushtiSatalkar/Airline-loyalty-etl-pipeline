@@ -381,13 +381,13 @@ def main():
             print(f"Snowflake session batch: {batch_id}")
             print("Connection: PASS")
 
-        start_batch_run(connection, args.batch_id)
-        print("Batch tracking: RUNNING")
-
         execute_sql_file(
             connection,
             "sql/00_control.sql",
         )
+
+        start_batch_run(connection, args.batch_id)
+        print("Batch tracking: RUNNING")
 
         execute_sql_file(
             connection,

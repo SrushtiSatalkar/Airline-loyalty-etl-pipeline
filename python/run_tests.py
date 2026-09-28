@@ -49,15 +49,30 @@ def main():
     try:
         print("Running SkyPoints automated tests...")
 
+        failures = []
+
         with test_file.open("r", encoding="utf-8") as file:
             for statement_cursor in connection.execute_stream(file):
-                statement_cursor.fetchall()
+                results = statement_cursor.fetchall()
+
+                for row in results:
+                    result = str(row[0])
+
+                    if result.startswith("FAIL"):
+                        failures.append(result)
+                        print(result)
+                    else:
+                        print(result)
+
+        if failures:
+            raise AssertionError(
+                f"{len(failures)} automated test(s) failed."
+            )
 
         print("All automated tests passed.")
 
     finally:
         connection.close()
-
 
 if __name__ == "__main__":
     main()

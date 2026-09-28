@@ -85,7 +85,7 @@ Although the supplied field specification identifies `Member_Name` as a key, nam
 
 ### Latest-record semantics
 
-The pipeline uses the source feed timestamp as the record version.
+The pipeline uses `source_feed_timestamp` as the logical record version. Because the supplied member feed does not contain a per-record update/version timestamp, this value is derived from the batch date.
 
 `Last_Flight_Date` is **not** used to determine which profile is newer because it represents a business attribute rather than a source-system version.
 

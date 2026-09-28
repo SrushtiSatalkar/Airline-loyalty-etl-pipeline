@@ -56,7 +56,7 @@ Although the assessment source layout identifies `Member_Name` as a key, `Member
 
 ### Latest record
 
-`source_feed_timestamp` is treated as the logical profile version.
+`source_feed_timestamp` is treated as the logical profile version. Because the supplied member feed does not contain a per-record update/version timestamp, this value is derived from the batch date.
 
 `Last_Flight_Date` represents business activity and is **not** used to determine which profile is newer.
 

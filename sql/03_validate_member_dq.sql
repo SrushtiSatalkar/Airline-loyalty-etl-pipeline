@@ -144,10 +144,13 @@ dq_evaluated AS (
                 ),
 
                 IFF(
-                    is_active IS NOT NULL
-                    AND is_active NOT IN ('A', 'I'),
-                    'IS_ACTIVE_INVALID',
-                    NULL
+                    is_active IS NULL,
+                    'IS_ACTIVE_MISSING',
+                    IFF(
+                        is_active NOT IN ('A', 'I'),
+                        'IS_ACTIVE_INVALID',
+                        NULL
+                    )
                 ),
 
                 IFF(
