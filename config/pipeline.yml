@@ -1,0 +1,14 @@
+pipeline:
+  name: skypoints_etl
+
+sources:
+  member:
+    stage_path: member
+    file_pattern: ".*member_profile_feed\\.csv"
+
+  redemption:
+    stage_path: redemption
+    file_pattern: ".*redemptions\\.json"
+
+processing:
+  default_batch_id: "20260926"

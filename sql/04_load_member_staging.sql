@@ -1,13 +1,9 @@
 -- SkyPoints: Load validated member staging and DQ quarantine
 --
--- Controlled assessment sample:
--- feed_as_of_date = 2026-09-26
---
--- Production:
--- feed_as_of_date should come from batch/source metadata.
+-- Batch orchestration:
+-- Relies on session variable $BATCH_ID set feed date during execution.
 
-SET feed_as_of_date = '2026-09-26';
-
+SET feed_as_of_date = TO_DATE($BATCH_ID, 'YYYYMMDD');
 -- ============================================================
 -- 1. Load valid member records
 -- ============================================================

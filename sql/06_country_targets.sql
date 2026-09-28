@@ -1,6 +1,6 @@
 EXECUTE IMMEDIATE $$
 DECLARE
-    batch_id STRING DEFAULT '20260927';
+    batch_id STRING DEFAULT $BATCH_ID;
     countries ARRAY DEFAULT ARRAY_CONSTRUCT(
         'USA',
         'IND',

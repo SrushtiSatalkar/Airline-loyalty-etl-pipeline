@@ -4,13 +4,8 @@
 -- A source record replaces the current state only when its
 -- source_feed_timestamp is newer than the existing record.
 --
--- Controlled assessment sample:
--- batch_id = 20260927
---
--- Production:
--- batch_id should come from batch/source orchestration metadata.
-
-SET batch_id = '20260927';
+-- Batch orchestration:
+-- Relies on session variable $BATCH_ID set during execution.
 
 -- ============================================================
 -- 1. Maintain current member state
@@ -39,7 +34,7 @@ USING (
 
     FROM SKYPOINTS.STAGING.MEMBER_STAGING
 
-    WHERE batch_id = $batch_id
+    WHERE batch_id = $BATCH_ID
 ) AS source
 
 ON target.member_id = source.member_id
@@ -53,22 +48,22 @@ WHEN MATCHED
      AND source.source_feed_timestamp > target.source_feed_timestamp
 
 THEN UPDATE SET
-    target.member_name           = source.member_name,
-    target.enrollment_date       = source.enrollment_date,
-    target.last_flight_date      = source.last_flight_date,
-    target.tier_code             = source.tier_code,
-    target.agent_name            = source.agent_name,
-    target.state                 = source.state,
-    target.country               = source.country,
-    target.dob                   = source.dob,
-    target.is_active             = source.is_active,
-    target.age                   = source.age,
-    target.stale_member          = source.stale_member,
-    target.source_feed_timestamp = source.source_feed_timestamp,
-    target.batch_id              = source.batch_id,
-    target.source_file_name      = source.source_file_name,
-    target.source_row_number     = source.source_row_number,
-    target.updated_at            = CURRENT_TIMESTAMP()
+    target.member_name             = source.member_name,
+    target.enrollment_date         = source.enrollment_date,
+    target.last_flight_date        = source.last_flight_date,
+    target.tier_code               = source.tier_code,
+    target.agent_name              = source.agent_name,
+    target.state                   = source.state,
+    target.country                 = source.country,
+    target.dob                     = source.dob,
+    target.is_active               = source.is_active,
+    target.age                     = source.age,
+    target.stale_member            = source.stale_member,
+    target.source_feed_timestamp   = source.source_feed_timestamp,
+    target.batch_id                = source.batch_id,
+    target.source_file_name        = source.source_file_name,
+    target.source_row_number       = source.source_row_number,
+    target.updated_at              = CURRENT_TIMESTAMP()
 
 -- ============================================================
 -- New member:
