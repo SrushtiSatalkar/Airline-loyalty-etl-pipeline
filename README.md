@@ -54,7 +54,6 @@ The implementation uses:
 ├── docs/
 │   ├── architecture.md
 │   ├── assumptions.md
-│   └── demo.md
 ├── python/
 │   ├── run_pipeline.py
 │   └── run_tests.py
