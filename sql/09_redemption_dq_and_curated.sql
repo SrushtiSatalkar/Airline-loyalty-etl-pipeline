@@ -40,7 +40,7 @@ WITH duplicate_check AS (
             PARTITION BY r.batch_id, r.txn_id
         ) AS txn_id_count
     FROM SKYPOINTS.STAGING.REDEMPTION_STAGING r
-    WHERE r.batch_id = '20260926'
+    WHERE r.batch_id = $BATCH_ID
 ),
 
 evaluated AS (

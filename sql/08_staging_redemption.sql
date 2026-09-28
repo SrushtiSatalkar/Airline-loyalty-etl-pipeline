@@ -55,7 +55,7 @@ USING (
         INPUT => r.raw_record:redemptions
     ) redemption
 
-    WHERE r.batch_id = '20260926'
+    WHERE r.batch_id = $BATCH_ID
 ) AS source
 
 ON target.batch_id = source.batch_id

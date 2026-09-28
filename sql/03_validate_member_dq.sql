@@ -18,7 +18,7 @@ WITH raw_records AS (
         source_row_number,
         raw_record,
         ingestion_timestamp,
-
+        source_feed_timestamp,
         SPLIT_PART(raw_record, '|', 2) AS record_type,
 
         (
@@ -27,7 +27,7 @@ WITH raw_records AS (
             - 1
         ) AS source_field_count
 
-    FROM SKYPOINTS.RAW.RAW_MEMBER_FEED
+    FROM SKYPOINTS.RAW.RAW_MEMBER_FEED r
 ),
 
 parsed_records AS (
@@ -38,7 +38,9 @@ parsed_records AS (
         raw_record,
         record_type,
         source_field_count,
+        source_feed_timestamp,
         ingestion_timestamp,
+        
 
         NULLIF(TRIM(SPLIT_PART(raw_record, '|', 3)), '') AS member_name,
         NULLIF(TRIM(SPLIT_PART(raw_record, '|', 4)), '') AS member_id,
@@ -218,7 +220,7 @@ SELECT
         TRUE,
         FALSE
     ) AS is_valid,
-
+    source_feed_timestamp,
     ingestion_timestamp
 
 FROM dq_evaluated;

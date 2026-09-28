@@ -61,8 +61,7 @@ USING (
             ) > 90
         END AS stale_member,
 
-        TO_TIMESTAMP_NTZ($feed_as_of_date) AS source_feed_timestamp,
-
+        source_feed_timestamp,
         ingestion_timestamp
 
     FROM SKYPOINTS.STAGING.V_MEMBER_DQ_EVALUATED
