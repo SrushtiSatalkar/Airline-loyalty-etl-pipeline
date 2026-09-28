@@ -42,8 +42,9 @@ USING (
 
         redemption.value:partner::VARCHAR AS partner,
 
-        redemption.value:miles_redeemed::NUMBER(18,0)
-            AS miles_redeemed,
+        TRY_TO_NUMBER(
+            redemption.value:miles_redeemed::VARCHAR
+        )::NUMBER(18,0) AS miles_redeemed,
 
         redemption.value:status::VARCHAR AS status,
 
